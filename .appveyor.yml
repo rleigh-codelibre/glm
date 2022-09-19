@@ -9,10 +9,11 @@ configuration:
   - Release
 
 image:
-  - Visual Studio 2013
-  - Visual Studio 2015
-  - Visual Studio 2017
+  - Visual Studio 2022
   - Visual Studio 2019
+  - Visual Studio 2017
+  - Visual Studio 2015
+  - Visual Studio 2013
 
 environment:
   matrix:
@@ -21,6 +22,7 @@ environment:
     - GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON
     - GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_14=ON
     - GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_17=ON
+    - GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_20=ON
 
 matrix:
     exclude:
@@ -31,6 +33,8 @@ matrix:
     - image: Visual Studio 2013
       GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_17=ON
     - image: Visual Studio 2013
+      GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_20=ON
+    - image: Visual Studio 2013
       configuration: Debug
     - image: Visual Studio 2015
       GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_SSE2=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON
@@ -39,6 +43,8 @@ matrix:
     - image: Visual Studio 2015
       GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_17=ON
     - image: Visual Studio 2015
+      GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_20=ON
+    - image: Visual Studio 2015
       platform: x86
     - image: Visual Studio 2015
       configuration: Debug
@@ -46,8 +52,14 @@ matrix:
       platform: x86
     - image: Visual Studio 2017
       configuration: Debug
+    - image: Visual Studio 2017
+      GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_20=ON
     - image: Visual Studio 2019
       platform: x64
+    - image: Visual Studio 2019
+      GLM_ARGUMENTS: -DGLM_TEST_ENABLE_SIMD_AVX=ON -DGLM_TEST_ENABLE_LANG_EXTENSIONS=ON -DGLM_TEST_ENABLE_CXX_20=ON
+    - image: Visual Studio 2022
+      platform: x86
 
 branches:
   only:
@@ -55,8 +67,23 @@ branches:
 
 before_build:
   - ps: |
+      $ErrorActionPreference = "Stop"
+
       mkdir build
       cd build
+
+      function Invoke-VcVars {
+        param(
+         [String] $varsScriptName
+        )
+        $cmdLine = """$varsScriptName"" $args & set"
+        & $Env:SystemRoot\system32\cmd.exe /c $cmdLine |
+        select-string '^([^=]*)=(.*)$' | foreach-object {
+          $varName = $_.Matches[0].Groups[1].Value
+          $varValue = $_.Matches[0].Groups[2].Value
+          set-item Env:$varName $varValue
+        }
+      }
 
       if ("$env:APPVEYOR_JOB_NAME" -match "Image: Visual Studio 2013") {
           $env:generator="Visual Studio 12 2013"
@@ -68,25 +95,57 @@ before_build:
           $env:generator="Visual Studio 15 2017"
       }
       if ("$env:APPVEYOR_JOB_NAME" -match "Image: Visual Studio 2019") {
-          $env:generator="Visual Studio 16 2019"
+          $env:generator="Ninja"
+          if ($env:PLATFORM -eq "x64") {
+              Invoke-VcVars "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
+          } else {
+              Invoke-VcVars "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars32.bat"
+          }
+      }
+      if ("$env:APPVEYOR_JOB_NAME" -match "Image: Visual Studio 2022") {
+          $env:generator="Ninja"
+          if ($env:PLATFORM -eq "x64") {
+              Invoke-VcVars "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+          } else {
+              Invoke-VcVars "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars32.bat"
+          }
       }
       if ($env:PLATFORM -eq "x64") {
-          $env:generator="$env:generator Win64"
+          if ("$env:APPVEYOR_JOB_NAME" -match "Image: Visual Studio 2022" -or "$env:APPVEYOR_JOB_NAME" -match "Image: Visual Studio 2019") {
+              echo "Building with Ninja"
+      } else {
+              $env:generator="$env:generator Win64"
+          }
       }
       echo generator="$env:generator"
       cmake .. -G "$env:generator" -DCMAKE_INSTALL_PREFIX="$env:APPVEYOR_BUILD_FOLDER/install" -DGLM_QUIET=ON -DGLM_TEST_ENABLE=ON "$env:GLM_ARGUMENTS"
 
 build_script:
-  - cmake --build . --parallel --config %CONFIGURATION% -- /m /v:minimal
-  - cmake --build . --target install --parallel --config %CONFIGURATION% -- /m /v:minimal
+  - ps: |
+      $ErrorActionPreference = "Stop"
+
+      if ($env:generator -eq "Ninja") {
+          cmake --build . --parallel
+          cmake --build . --target install --parallel
+      } else {
+          cmake --build . --parallel --config $env:CONFIGURATION -- /m /v:minimal
+          cmake --build . --target install --parallel --config $env:CONFIGURATION -- /m /v:minimal
+      }
 
 test_script:
   - ctest --parallel 4 --verbose -C %CONFIGURATION%
   - cd ..
   - ps: |
+      $ErrorActionPreference = "Stop"
+
       mkdir build_test_cmake
       cd build_test_cmake
+
       cmake ..\test\cmake\ -G "$env:generator" -DCMAKE_PREFIX_PATH="$env:APPVEYOR_BUILD_FOLDER/install"
-  - cmake --build . --parallel --config %CONFIGURATION% -- /m /v:minimal
+      if ($env:generator -eq "Ninja") {
+          cmake --build . --parallel
+      } else {
+          cmake --build . --parallel --config $env:CONFIGURATION -- /m /v:minimal
+      }
 
 deploy: off
