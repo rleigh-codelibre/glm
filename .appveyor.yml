@@ -61,10 +61,6 @@ matrix:
     - image: Visual Studio 2022
       platform: x86
 
-branches:
-  only:
-    - master
-
 before_build:
   - ps: |
       $ErrorActionPreference = "Stop"
